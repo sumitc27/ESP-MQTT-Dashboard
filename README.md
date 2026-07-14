@@ -35,8 +35,8 @@ The ESP-32 publishes JSON in this format:
 ## Repository Files
 
 - `mqtt-wifi.ino` - ESP-32 firmware that reads sensors and publishes data.
-- `dashboard-index.html` - Browser dashboard for live monitoring.
-- `index.html` - Alternate HTML entry point, if you want to use a different dashboard page.
+- `dashboard-index.html` - Browser dashboard for live monitoring displaying the volatage reading and AC Power Status.
+- `index.html` - Alternate HTML entry point, to test the publishing JSON message by the ESP for EMQX connection testing.
 
 ## Requirements
 
