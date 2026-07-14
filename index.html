@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Room Appliance Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Import MQTT.js library for browser WebSockets -->
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+</head>
+<body class="bg-slate-50 min-h-screen flex items-center justify-center p-4">
+
+    <div class="max-w-4xl w-full grid grid-cols-1 md:grid-cols-3 gap-6">
+        
+        <!-- Left Column: Connection Settings -->
+        <div class="col-span-1 bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+            <h2 class="text-xl font-bold text-slate-800 mb-4 flex items-center">
+                <svg class="w-5 h-5 mr-2 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                EMQX Settings
+            </h2>
+            
+            <div class="space-y-4 text-sm">
+                <div>
+                    <label class="block text-slate-500 font-medium mb-1">Broker WSS URL</label>
+                    <input id="broker" type="text" value="wss://broker.emqx.io:8084/mqtt" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="wss://your-url:8084/mqtt">
+                </div>
+                <div>
+                    <label class="block text-slate-500 font-medium mb-1">Username (Optional)</label>
+                    <input id="username" type="text" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-slate-500 font-medium mb-1">Password (Optional)</label>
+                    <input id="password" type="password" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                <div>
+                    <label class="block text-slate-500 font-medium mb-1">Topic</label>
+                    <input id="topic" type="text" value="building/room1/appliances" class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                </div>
+                
+                <button id="connectBtn" onclick="toggleConnection()" class="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg transition-colors">
+                    Connect to Broker
+                </button>
+            </div>
+            
+            <div class="mt-6 p-3 rounded-lg bg-slate-50 border border-slate-200">
+                <div class="text-xs text-slate-500 uppercase tracking-wider font-semibold mb-1">Status</div>
+                <div id="statusBadge" class="flex items-center text-sm font-medium text-slate-600">
+                    <span class="w-2 h-2 rounded-full bg-slate-400 mr-2"></span> Disconnected
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Column: Live Data Visualization -->
+        <div class="col-span-1 md:col-span-2 space-y-6">
+            
+            <!-- Room Status Card -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 flex flex-col items-center justify-center min-h-[250px] relative overflow-hidden transition-all duration-500" id="applianceCard">
+                <div class="absolute top-4 left-4 text-slate-400 font-medium text-sm">Room 1</div>
+                
+                <!-- Main Status Icon & Text -->
+                <div class="flex flex-col items-center z-10">
+                    <div id="powerIcon" class="w-20 h-20 rounded-full bg-slate-100 flex items-center justify-center text-slate-300 transition-colors duration-500 mb-4">
+                        <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    </div>
+                    <h3 class="text-3xl font-bold text-slate-800" id="statusText">Awaiting Data...</h3>
+                    <p class="text-slate-500 mt-2 text-sm">Waiting for ESP32 payload</p>
+                </div>
+            </div>
+
+            <!-- Live Log Console -->
+            <div class="bg-slate-900 rounded-2xl shadow-sm overflow-hidden flex flex-col h-[200px]">
+                <div class="bg-slate-800 px-4 py-2 border-b border-slate-700 flex justify-between items-center">
+                    <span class="text-slate-300 text-xs font-mono">Live MQTT Payload Log</span>
+                    <button onclick="clearLogs()" class="text-slate-400 hover:text-white text-xs">Clear</button>
+                </div>
+                <div id="logConsole" class="p-4 font-mono text-xs overflow-y-auto flex-1 space-y-2">
+                    <div class="text-slate-500">> Ready to receive incoming messages...</div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        let client = null;
+
+        function toggleConnection() {
+            const btn = document.getElementById('connectBtn');
+            
+            if (client && client.connected) {
+                client.end();
+                updateStatus('Disconnected', 'bg-slate-400');
+                btn.innerText = 'Connect to Broker';
+                btn.className = "w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg transition-colors";
+                return;
+            }
+
+            const brokerUrl = document.getElementById('broker').value;
+            const topic = document.getElementById('topic').value;
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+
+            updateStatus('Connecting...', 'bg-yellow-400');
+            
+            const options = {
+                clientId: 'Dashboard_Web_' + Math.random().toString(16).substr(2, 8),
+                clean: true
+            };
+
+            if(username) options.username = username;
+            if(password) options.password = password;
+
+            // Connect using MQTT.js
+            client = mqtt.connect(brokerUrl, options);
+
+            client.on('connect', () => {
+                updateStatus('Connected', 'bg-emerald-500');
+                btn.innerText = 'Disconnect';
+                btn.className = "w-full mt-4 bg-red-500 hover:bg-red-600 text-white font-semibold py-2.5 rounded-lg transition-colors";
+                
+                // Subscribe to the chosen topic
+                client.subscribe(topic, (err) => {
+                    if (!err) {
+                        addLog(`Subscribed to: ${topic}`, 'text-emerald-400');
+                    }
+                });
+            });
+
+            client.on('error', (err) => {
+                updateStatus('Connection Error', 'bg-red-500');
+                addLog(`Error: ${err.message}`, 'text-red-400');
+                client.end();
+            });
+
+            client.on('message', (receivedTopic, message) => {
+                // message is a Buffer
+                const payloadStr = message.toString();
+                addLog(`[${receivedTopic}] ${payloadStr}`, 'text-blue-300');
+                
+                try {
+                    const data = JSON.parse(payloadStr);
+                    updateDashboardUI(data);
+                } catch (e) {
+                    addLog(`Failed to parse JSON: ${e.message}`, 'text-yellow-400');
+                }
+            });
+        }
+
+        function updateDashboardUI(data) {
+            const statusText = document.getElementById('statusText');
+            const powerIcon = document.getElementById('powerIcon');
+            const card = document.getElementById('applianceCard');
+
+            if (data.appliance_status && data.appliance_status.toUpperCase() === 'ON') {
+                statusText.innerText = "Appliance is ON";
+                statusText.className = "text-3xl font-bold text-emerald-600";
+                powerIcon.className = "w-20 h-20 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-500 transition-colors duration-500 mb-4 shadow-[0_0_30px_rgba(16,185,129,0.3)]";
+                card.className = "bg-emerald-50/30 rounded-2xl shadow-sm border border-emerald-200 p-8 flex flex-col items-center justify-center min-h-[250px] relative overflow-hidden transition-all duration-500";
+            } else if (data.appliance_status && data.appliance_status.toUpperCase() === 'OFF') {
+                statusText.innerText = "Appliance is OFF";
+                statusText.className = "text-3xl font-bold text-slate-800";
+                powerIcon.className = "w-20 h-20 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 transition-colors duration-500 mb-4";
+                card.className = "bg-white rounded-2xl shadow-sm border border-slate-200 p-8 flex flex-col items-center justify-center min-h-[250px] relative overflow-hidden transition-all duration-500";
+            }
+        }
+
+        function updateStatus(text, colorClass) {
+            const badge = document.getElementById('statusBadge');
+            badge.innerHTML = `<span class="w-2 h-2 rounded-full ${colorClass} mr-2 shadow-sm"></span> ${text}`;
+        }
+
+        function addLog(msg, colorClass = 'text-slate-300') {
+            const consoleDiv = document.getElementById('logConsole');
+            const time = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.className = colorClass;
+            logEntry.innerText = `[${time}] ${msg}`;
+            consoleDiv.appendChild(logEntry);
+            consoleDiv.scrollTop = consoleDiv.scrollHeight; // Auto-scroll to bottom
+        }
+
+        function clearLogs() {
+            const consoleDiv = document.getElementById('logConsole');
+            consoleDiv.innerHTML = '<div class="text-slate-500">> Ready to receive incoming messages...</div>';
+        }
+    </script>
+</body>
+</html>

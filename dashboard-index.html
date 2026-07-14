@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitoring Station Dashboard</title>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            color: #2c3e50;
+        }
+        #connection-status {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: bold;
+            margin-bottom: 20px;
+            background-color: #ffeaa7; /* Warning yellow */
+            color: #d63031;
+        }
+        .connected {
+            background-color: #55efc4 !important; /* Success green */
+            color: #00b894 !important;
+        }
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            width: 100%;
+            max-width: 800px;
+        }
+        .card {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            text-align: center;
+            transition: transform 0.2s;
+        }
+        .card:hover {
+            transform: translateY(-5px);
+        }
+        .card h3 {
+            margin-top: 0;
+            color: #7f8c8d;
+            font-size: 1.1em;
+        }
+        .value {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #2980b9;
+            margin: 10px 0;
+        }
+        .unit {
+            font-size: 0.4em;
+            color: #95a5a6;
+        }
+        .status-on {
+            color: #27ae60;
+        }
+        .status-off {
+            color: #c0392b;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Remote Power Monitor</h1>
+    <div id="connection-status">Connecting to EMQX...</div>
+
+    <div class="dashboard-grid">
+        <div class="card">
+            <h3>Battery 1 (VSens1)</h3>
+            <div class="value" id="bat1-val">-- <span class="unit">V</span></div>
+        </div>
+
+        <div class="card">
+            <h3>Battery 2 (VSens2)</h3>
+            <div class="value" id="bat2-val">-- <span class="unit">V</span></div>
+        </div>
+
+        <div class="card">
+            <h3>AC Mains 1</h3>
+            <div class="value" id="ac1-val">--</div>
+        </div>
+
+        <div class="card">
+            <h3>AC Mains 2</h3>
+            <div class="value" id="ac2-val">--</div>
+        </div>
+    </div>
+
+    <script>
+        // --- EMQX Connection Settings ---
+        // Notice we use wss:// (Secure WebSocket) and port 8084
+        const brokerUrl = 'wss://j18eff7a.ala.asia-southeast1.emqxsl.com:8084/mqtt';
+        
+        // REPLACE THESE with your actual EMQX username and password
+        const options = {
+            clientId: 'WebDashboard_' + Math.random().toString(16).substr(2, 8),
+            username: 'test1', 
+            password: 'test1',
+            clean: true
+        };
+
+        const topic = 'monitoring_station/power_data';
+
+        // Connect to the broker
+        const client = mqtt.connect(brokerUrl, options);
+
+        const statusDiv = document.getElementById('connection-status');
+
+        // On Successful Connection
+        client.on('connect', function () {
+            console.log('Connected to MQTT Broker via WebSockets!');
+            statusDiv.textContent = 'Connected to Broker';
+            statusDiv.classList.add('connected');
+            
+            // Subscribe to the topic
+            client.subscribe(topic, function (err) {
+                if (!err) {
+                    console.log('Successfully subscribed to: ' + topic);
+                } else {
+                    console.error('Subscription error:', err);
+                }
+            });
+        });
+
+        // Handle Connection Errors
+        client.on('error', function(error) {
+            console.error('Connection failed:', error);
+            statusDiv.textContent = 'Connection Failed. Check console.';
+            statusDiv.classList.remove('connected');
+        });
+
+        // When a new message arrives
+        client.on('message', function (receivedTopic, message) {
+            console.log('Message arrived on ' + receivedTopic + ': ' + message.toString());
+            
+            try {
+                // Parse the incoming JSON string into a JavaScript object
+                const data = JSON.parse(message.toString());
+
+                // Update Battery 1
+                if (data.battery_1_voltage !== undefined) {
+                    document.getElementById('bat1-val').innerHTML = data.battery_1_voltage + ' <span class="unit">V</span>';
+                }
+
+                // Update Battery 2
+                if (data.battery_2_voltage !== undefined) {
+                    document.getElementById('bat2-val').innerHTML = data.battery_2_voltage + ' <span class="unit">V</span>';
+                }
+
+                // Update AC 1 (With color formatting)
+                if (data.ac_1_status !== undefined) {
+                    const ac1Elem = document.getElementById('ac1-val');
+                    ac1Elem.textContent = data.ac_1_status;
+                    ac1Elem.className = 'value ' + (data.ac_1_status === 'ON' ? 'status-on' : 'status-off');
+                }
+
+                // Update AC 2 (With color formatting)
+                if (data.ac_2_status !== undefined) {
+                    const ac2Elem = document.getElementById('ac2-val');
+                    ac2Elem.textContent = data.ac_2_status;
+                    ac2Elem.className = 'value ' + (data.ac_2_status === 'ON' ? 'status-on' : 'status-off');
+                }
+
+            } catch (e) {
+                console.error("Error parsing JSON message:", e);
+            }
+        });
+    </script>
+</body>
+</html>
