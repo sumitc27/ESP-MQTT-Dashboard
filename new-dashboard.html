@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remote Power Monitor Dashboard</title>
+    <meta name="description" content="Real-time remote power monitoring dashboard with MQTT connectivity for battery voltage, charge estimation, and AC mains status.">
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #e8ecef;
+            color: #333;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 40px 20px;
+        }
+
+        h1 {
+            font-size: 1.65rem;
+            font-weight: 800;
+            color: #2c3e50;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 16px;
+        }
+
+        /* ── Connection badge ── */
+        #connection-status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 22px;
+            border-radius: 24px;
+            font-weight: 600;
+            font-size: 0.85rem;
+            margin-bottom: 30px;
+            background-color: #ffeaa7;
+            color: #856404;
+            transition: all 0.4s ease;
+        }
+
+        #connection-status::before {
+            content: '';
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: #d4a017;
+            display: inline-block;
+            flex-shrink: 0;
+            transition: background-color 0.4s ease;
+        }
+
+        #connection-status.connected {
+            background-color: #d4edda;
+            color: #3c6e50;
+        }
+
+        #connection-status.connected::before {
+            background-color: #27ae60;
+        }
+
+        /* ── Grid ── */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            width: 100%;
+            max-width: 860px;
+        }
+
+        /* ── Card ── */
+        .card {
+            background: #ffffff;
+            padding: 28px 24px;
+            border-radius: 18px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+            text-align: center;
+            transition: transform 0.25s ease, box-shadow 0.25s ease;
+            position: relative;
+        }
+
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+        }
+
+        /* ── Card header: label + icon ── */
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 14px;
+        }
+
+        .card-header h3 {
+            font-size: 0.78rem;
+            font-weight: 700;
+            color: #6b7c8a;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+        }
+
+        .card-header .icon {
+            width: 20px;
+            height: 20px;
+            opacity: 0.45;
+        }
+
+        /* ── Values ── */
+        .value {
+            font-size: 2.8rem;
+            font-weight: 700;
+            color: #2c3e50;
+            line-height: 1.1;
+        }
+
+        .unit {
+            font-size: 0.95rem;
+            font-weight: 500;
+            color: #95a5a6;
+            margin-left: 2px;
+        }
+
+        /* ── Charge donut card ── */
+        .charge-card .value-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .donut-container {
+            position: relative;
+            width: 68px;
+            height: 68px;
+            flex-shrink: 0;
+        }
+
+        .donut-ring {
+            transform: rotate(-90deg);
+        }
+
+        .donut-bg {
+            fill: none;
+            stroke: #e8ecef;
+            stroke-width: 6;
+        }
+
+        .donut-fill {
+            fill: none;
+            stroke: #27ae60;
+            stroke-width: 6;
+            stroke-linecap: round;
+            transition: stroke-dashoffset 0.8s ease, stroke 0.4s ease;
+        }
+
+        /* ── AC Status indicators ── */
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            display: inline-block;
+            flex-shrink: 0;
+        }
+
+        .status-dot.active {
+            background-color: #27ae60;
+            box-shadow: 0 0 8px rgba(39, 174, 96, 0.5);
+        }
+
+        .status-dot.inactive {
+            background-color: #e74c3c;
+            box-shadow: 0 0 8px rgba(231, 76, 60, 0.45);
+        }
+
+        .status-text {
+            font-size: 2.4rem;
+            font-weight: 700;
+            color: #2c3e50;
+        }
+
+        .status-text.active-text {
+            color: #2c3e50;
+        }
+
+        .status-text.inactive-text {
+            color: #e74c3c;
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 720px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+            h1 {
+                font-size: 1.3rem;
+            }
+            .value {
+                font-size: 2.2rem;
+            }
+        }
+
+        /* ── Pulse animation for live dot ── */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .status-dot.active {
+            animation: pulse 2s ease-in-out infinite;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Remote Power Monitor</h1>
+    <div id="connection-status">Connecting to Broker…</div>
+
+    <div class="dashboard-grid">
+
+        <!-- Battery 1 Voltage -->
+        <div class="card" id="card-bat1">
+            <div class="card-header">
+                <h3>Battery 1 Voltage</h3>
+                <!-- Battery icon (SVG) -->
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="1" y="6" width="18" height="12" rx="2" ry="2"></rect>
+                    <line x1="23" y1="10" x2="23" y2="14"></line>
+                </svg>
+            </div>
+            <div class="value" id="bat-volt">-- <span class="unit">V</span></div>
+        </div>
+
+        <!-- Estimated Charge (donut) -->
+        <div class="card charge-card" id="card-charge">
+            <div class="card-header">
+                <h3>Estimated Charge</h3>
+                <!-- Filled battery icon -->
+                <svg class="icon" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <rect x="1" y="6" width="18" height="12" rx="2" ry="2"></rect>
+                    <rect x="19" y="9" width="3" height="6" rx="1" ry="1"></rect>
+                </svg>
+            </div>
+            <div class="value-row">
+                <div class="donut-container">
+                    <svg class="donut-ring" viewBox="0 0 68 68" width="68" height="68">
+                        <circle class="donut-bg" cx="34" cy="34" r="28"></circle>
+                        <circle class="donut-fill" id="donut-fill" cx="34" cy="34" r="28"
+                            stroke-dasharray="175.93"
+                            stroke-dashoffset="175.93"></circle>
+                    </svg>
+                </div>
+                <div class="value" id="bat-charge">-- <span class="unit">%</span></div>
+            </div>
+        </div>
+
+        <!-- Time to 50% DoD -->
+        <div class="card" id="card-dod">
+            <div class="card-header">
+                <h3>Time to 50% DoD</h3>
+                <!-- Clock icon -->
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
+                </svg>
+            </div>
+            <div class="value" id="bat-hours">-- <span class="unit">Hrs</span></div>
+        </div>
+
+        <!-- Battery 2 (VSens2) -->
+        <div class="card" id="card-bat2">
+            <div class="card-header">
+                <h3>Battery 2 (VSENS2)</h3>
+                <!-- Battery icon -->
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="1" y="6" width="18" height="12" rx="2" ry="2"></rect>
+                    <line x1="23" y1="10" x2="23" y2="14"></line>
+                </svg>
+            </div>
+            <div class="value" id="bat2-val">-- <span class="unit">V</span></div>
+        </div>
+
+        <!-- AC Mains 1 -->
+        <div class="card" id="card-ac1">
+            <div class="card-header">
+                <h3>AC Mains 1</h3>
+                <!-- Plug icon -->
+                <svg class="icon" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <path d="M9 2v5H7V2a1 1 0 0 1 2 0zm6 0v5h-2V2a1 1 0 0 1 2 0zm-1 9h-4a4 4 0 0 1-4-4V6h12v1a4 4 0 0 1-4 4zm-1 1v3h-2v-3h2zm-2 4h2v2a2 2 0 0 1-2 2h0a2 2 0 0 1-2-2v-2h2z"/>
+                </svg>
+            </div>
+            <div class="status-indicator" id="ac1-val">
+                <span class="status-text">--</span>
+                <span class="status-dot"></span>
+            </div>
+        </div>
+
+        <!-- AC Mains 2 -->
+        <div class="card" id="card-ac2">
+            <div class="card-header">
+                <h3>AC Mains 2</h3>
+                <!-- Plug icon -->
+                <svg class="icon" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                    <path d="M9 2v5H7V2a1 1 0 0 1 2 0zm6 0v5h-2V2a1 1 0 0 1 2 0zm-1 9h-4a4 4 0 0 1-4-4V6h12v1a4 4 0 0 1-4 4zm-1 1v3h-2v-3h2zm-2 4h2v2a2 2 0 0 1-2 2h0a2 2 0 0 1-2-2v-2h2z"/>
+                </svg>
+            </div>
+            <div class="status-indicator" id="ac2-val">
+                <span class="status-text">--</span>
+                <span class="status-dot"></span>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // ── Donut helper ──
+        const DONUT_CIRCUMFERENCE = 2 * Math.PI * 28; // ≈ 175.93
+        const donutFill = document.getElementById('donut-fill');
+
+        function setDonut(percent) {
+            const offset = DONUT_CIRCUMFERENCE - (DONUT_CIRCUMFERENCE * percent / 100);
+            donutFill.style.strokeDashoffset = offset;
+
+            // Color shifts: green > yellow > red
+            if (percent >= 60) {
+                donutFill.style.stroke = '#27ae60';
+            } else if (percent >= 30) {
+                donutFill.style.stroke = '#f39c12';
+            } else {
+                donutFill.style.stroke = '#e74c3c';
+            }
+        }
+
+        // ── Update AC status helper ──
+        function setAcStatus(elementId, statusStr) {
+            const container = document.getElementById(elementId);
+            const textEl = container.querySelector('.status-text');
+            const dotEl = container.querySelector('.status-dot');
+
+            if (statusStr === 'ON') {
+                textEl.textContent = 'Active';
+                textEl.className = 'status-text active-text';
+                dotEl.className = 'status-dot active';
+            } else {
+                textEl.textContent = 'Inactive';
+                textEl.className = 'status-text inactive-text';
+                dotEl.className = 'status-dot inactive';
+            }
+        }
+
+        // ── EMQX Connection Settings ──
+        const brokerUrl = 'wss://j18eff7a.ala.asia-southeast1.emqxsl.com:8084/mqtt';
+
+        const options = {
+            clientId: 'WebDashboard_' + Math.random().toString(16).substr(2, 8),
+            username: 'test1',
+            password: 'test1',
+            clean: true
+        };
+
+        const topic = 'dashboard-test';
+
+        // Connect to the broker
+        const client = mqtt.connect(brokerUrl, options);
+
+        const statusDiv = document.getElementById('connection-status');
+
+        // On Successful Connection
+        client.on('connect', function () {
+            console.log('Connected to MQTT Broker via WebSockets!');
+            statusDiv.textContent = 'Connected to Broker';
+            statusDiv.classList.add('connected');
+
+            // Subscribe to the topic
+            client.subscribe(topic, function (err) {
+                if (!err) {
+                    console.log('Successfully subscribed to: ' + topic);
+                } else {
+                    console.error('Subscription error:', err);
+                }
+            });
+        });
+
+        // Handle Connection Errors
+        client.on('error', function(error) {
+            console.error('Connection failed:', error);
+            statusDiv.textContent = 'Connection Failed. Check console.';
+            statusDiv.classList.remove('connected');
+        });
+
+        // --- LATENCY TEST TOOL ---
+        let pingTime = 0;
+
+        client.on('connect', function () {
+            client.subscribe('dashboard-test/ping');
+
+            setInterval(() => {
+                pingTime = Date.now();
+                client.publish('dashboard-test/ping', 'ping');
+            }, 2000);
+        });
+
+        client.on('message', function (receivedTopic, message) {
+            if (receivedTopic === 'dashboard-test/ping') {
+                const latency = Date.now() - pingTime;
+                console.log(`Round-Trip Latency: ${latency} ms`);
+                return;
+            }
+        });
+
+        // When a new message arrives
+        client.on('message', function (receivedTopic, message) {
+            console.log('Message arrived on ' + receivedTopic + ': ' + message.toString());
+
+            try {
+                const data = JSON.parse(message.toString());
+
+                // --- LATENCY CALCULATION ---
+                if (data.timestamp) {
+                    const receivedTime = Date.now();
+                    const latency = receivedTime - data.timestamp;
+                    console.log(`One-Way Latency: ${latency} ms`);
+                }
+
+                // Update Battery Voltage
+                if (data.battery_1_voltage !== undefined) {
+                    const v = parseFloat(data.battery_1_voltage);
+                    document.getElementById('bat-volt').innerHTML = v.toFixed(2) + ' <span class="unit">V</span>';
+
+                    // Calculate Estimated Charge % from voltage
+                    let estimatedPercent = 0;
+                    if (v >= 12.7) {
+                        estimatedPercent = 100.0;
+                    } else if (v <= 10.5) {
+                        estimatedPercent = 0.0;
+                    } else {
+                        estimatedPercent = ((v - 10.5) / (12.7 - 10.5)) * 100.0;
+                    }
+                    document.getElementById('bat-charge').innerHTML = Math.round(estimatedPercent) + ' <span class="unit">%</span>';
+                    setDonut(estimatedPercent);
+
+                    // Calculate Remaining Usable Hours (time to 50% DoD at 1.09A load)
+                    let remainingHours = 0;
+                    if (estimatedPercent > 50.0) {
+                        remainingHours = 3.12 * ((estimatedPercent - 50.0) / 50.0);
+                    }
+                    document.getElementById('bat-hours').innerHTML = remainingHours.toFixed(1) + ' <span class="unit">Hrs</span>';
+                }
+
+                // Update Battery 2
+                if (data.battery_2_voltage !== undefined) {
+                    document.getElementById('bat2-val').innerHTML = parseFloat(data.battery_2_voltage).toFixed(2) + ' <span class="unit">V</span>';
+                }
+
+                // Update AC 1
+                if (data.ac_1_status !== undefined) {
+                    setAcStatus('ac1-val', data.ac_1_status);
+                }
+
+                // Update AC 2
+                if (data.ac_2_status !== undefined) {
+                    setAcStatus('ac2-val', data.ac_2_status);
+                }
+
+            } catch (e) {
+                console.error("Error parsing JSON message:", e);
+            }
+        });
+    </script>
+</body>
+</html>
